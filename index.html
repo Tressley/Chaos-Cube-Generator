@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>&#x1F500; Chaos Cube Generator</title>
+    <style>
+        @import url("https://necolas.github.io/normalize.css/8.0.1/normalize.css");
+
+        @keyframes pulse {
+            from { opacity: 1; }
+            to { opacity: 0.5; }
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            align-items: center;
+            background-color: black;
+            color: gainsboro;
+            display: flex;
+            flex-direction: column;
+            font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            padding: 1.5rem;
+        }
+
+        main {
+            display: flex;
+            flex-direction: column;
+            max-width: 40em;
+        }
+
+        h1 {
+            color: ghostwhite;
+            font-size: 1.5rem;
+            line-height: 1.5;
+            margin: 0 0 1rem 0;
+        }
+
+        h2 {
+            color: ghostwhite;
+            font-size: 1rem;
+            line-height: 1.5;
+            margin: 0 0 .5rem 0;
+        }
+
+        a {
+            color: dodgerblue;
+            text-decoration: none;
+        }
+
+        a:hover { text-decoration: underline; }
+
+        p {
+            line-height: 1.5;
+            margin: 0 0 1.5rem 0;
+        }
+
+        label {
+            color: ghostwhite;
+            font-weight: bold;
+            line-height: 1.5;
+            margin: 0 0 1rem 0;
+        }
+
+        small {
+            font-size: .75rem;
+            line-height: 1.333;
+            margin: 0 0 1.5rem 0;
+        }
+
+        input,
+        textarea {
+            border: 2px solid slategray;
+            border-radius: 4px;
+            line-height: 1.5;
+            margin: 0 0 1rem 0;
+            padding: .5rem;
+        }
+
+        input:focus,
+        textarea:focus {
+            border-color: black;
+            outline: 2px solid dodgerblue;
+        }
+
+        button {
+            background-color: dodgerblue;
+            border: 2px solid transparent;
+            border-radius: 4px;
+            color: ghostwhite;
+            display: flex;
+            justify-content: center;
+            line-height: 1.5;
+            margin: .5rem 0 1.5rem 0;
+            padding: .5rem;
+        }
+
+        button:hover { cursor: pointer; }
+        button:disabled {
+            background-color: transparent;
+            border-color: slategray;
+            color: slategray;
+            cursor: default;
+        }
+
+        #success {
+            color: forestgreen;
+            text-align: center;
+        }
+
+        .hidden {
+            height: 1px;
+            left: -10000px;
+            overflow: hidden;
+            position: absolute;
+            top: auto;
+            width: 1px;
+        }
+
+        .dodgerblue { color: dodgerblue; }
+        .pulse { animation: pulse 0.5s ease-in-out infinite alternate; }
+    </style>
+</head>
+<body>
+<main>
+    <h1>&#x1F500; Chaos Cube Generator</h1>
+    <p>This tool aims to help cube designers generate a random list of cards within a given Scryfall query.</p>
+    <label for="query"><span class="dodgerblue">1.</span> Enter a Scryfall query</label>
+    <textarea id="query" placeholder="e.g., format:pauper colors&lt;=3" rows="3"></textarea>
+    <small><a href="https://scryfall.com/docs/syntax" target="_blank">Scryfall Syntax Guide</a></small>
+    <label for="qty"><span class="dodgerblue">2.</span> Select the amount of cards</label>
+    <input type="number" id="qty" placeholder="e.g., 360" value="360" min="1" max="720">
+    <button id="generate" type="submit">Generate</button>
+    <p id="success" class="hidden">&#x2705; Cube successfully generated!</p>
+    <h2>&#x1F4A1; Note</h2>
+    <small>For a more "balanced" experience, it is recommended to generate a smaller number of cards with a given color or type rather than an entire cube. This tool uses a simple <a href="https://stackoverflow.com/a/12646864" target="_blank">Fisher-Yates shuffle</a> to randomize the selection and does not account for an even distribution of card colors or types.</small>
+</main>
+<script>
+    // Fetch cards from Scryfall based on user query and save them to a text file
+    async function fetchCards() {
+        const query = document.getElementById('query').value.trim();
+        const qty = document.getElementById('qty').value.trim();
+        const button = document.getElementById('generate');
+        const success = document.getElementById('success');
+        if (!query) {
+            alert('Please enter a valid Scryfall query.');
+            return;
+        } else if (!qty || qty <= 0 || qty > 720) {
+            alert('Please enter a valid number of cards.');
+            return;
+        }
+
+        button.classList.add('pulse');
+        button.disabled = true;
+        button.textContent = String.fromCodePoint('0x23F3') + ' Generating Cube...';
+        success.classList.add('hidden');
+
+        const encodedQuery = encodeURIComponent(query);
+        let apiUrl = `https://api.scryfall.com/cards/search?q=${encodedQuery}`;
+        let allCardNames = [];
+
+        try {
+            // Fetch all pages of data
+            while (apiUrl) {
+                const response = await fetch(apiUrl);
+                // Check if the response indicates a rate limit
+                if (response.status === 429) { // HTTP 429: Too Many Requests
+                    const retryAfter = response.headers.get('Retry-After');
+                    console.warn(`You are being rate limited by Scryfall. Please wait ${retryAfter || 'a moment'} before trying again.`);
+                    alert(`You are being rate limited. Please wait ${retryAfter || 'a moment'} before trying again.`);
+                    return;
+                }
+
+                const data = await response.json();
+
+                if (!data || !data.data) {
+                    console.error('Error fetching card data');
+                    alert('No card data found for the provided query.');
+                    return;
+                }
+
+                // Add the current page's card names to the list
+                allCardNames.push(...data.data.map(card => card.name));
+
+                // Check if there's a next page; if so, set apiUrl to the next page URL
+                apiUrl = data.has_more ? data.next_page : null;
+            }
+
+            // Randomly selected cards from the list
+            const randomCardNames = selectRandomCards(allCardNames, qty);
+
+            // Create a Blob from the card names and a downloadable link
+            const cardNamesText = randomCardNames.join('\n');
+            const blob = new Blob([cardNamesText], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'new-chaos-cube.txt';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('Error fetching data from Scryfall:', error);
+            alert('An error occurred while fetching data from Scryfall.');
+        } finally {
+            button.classList.remove('pulse');
+            button.disabled = false;
+            button.textContent = String.fromCodePoint('0x1F501') + ' Generate Again';
+            success.classList.remove('hidden');
+        }
+    }
+
+    // Use the Fisher-Yates shuffle to randomly select n unique card names from the list
+    function selectRandomCards(cardList, n) {
+        const shuffled = [...cardList];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        return shuffled.slice(0, Math.min(n, shuffled.length));
+    }
+
+    document.getElementById('generate').addEventListener('click', fetchCards);
+</script>
+</body>
+</html>
